@@ -1,7 +1,7 @@
 name: "SGCC Electricity GHCR"
 version: "v1.8.0"
 slug: "sgcc_electricity_ghcr"
-description: "获取国网电费数据的插件"
+description: "SGCC electricity data add-on"
 url: "https://github.com/ymx409599725-a11y/sgcc_electricity_new"
 arch:
   - aarch64
@@ -16,10 +16,10 @@ map:
   - config:rw
   # - media:rw
   - type: data
-    read_only: False
+    read_only: false
 options:
   PHONE_NUMBER: ""
-  PASSWORD: ""  
+  PASSWORD: ""
   IGNORE_USER_ID: "xxxx,xxxx"
   ENABLE_DATABASE_STORAGE: false
   DB_NAME: "homeassistant.db"
@@ -31,6 +31,7 @@ options:
   RECHARGE_NOTIFY: false
   BALANCE: 5.0
   PUSHPLUS_TOKEN: "xxxx,xxxx"
+  ARK_API_KEY: ""
 schema:
   PHONE_NUMBER: str
   PASSWORD: password
@@ -42,6 +43,7 @@ schema:
   JOB_START_TIME: str
   RETRY_WAIT_TIME_OFFSET_UNIT: int(2,30)
   DATA_RETENTION_DAYS: int
-  RECHARGE_NOTIFY: bool 
-  BALANCE: float 
+  RECHARGE_NOTIFY: bool
+  BALANCE: float
   PUSHPLUS_TOKEN: str
+  ARK_API_KEY: password?

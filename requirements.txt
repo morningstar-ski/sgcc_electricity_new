@@ -7,3 +7,4 @@ numpy==1.26.2
 mysql-connector-python==9.4.0
 # python-dotenv
 # python-dateutil
+openai==1.99.9
