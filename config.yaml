@@ -1,5 +1,5 @@
 name: "SGCC Electricity GHCR"
-version: "v1.8.0"
+version: "v1.8.1"
 slug: "sgcc_electricity_ghcr"
 description: "SGCC electricity data add-on"
 url: "https://github.com/ymx409599725-a11y/sgcc_electricity_new"
