@@ -1,6 +1,6 @@
-name: "SGCC Electricity"
+name: "SGCC Electricity GHCR"
 version: "v1.8.0"
-slug: "sgcc_electricity"
+slug: "sgcc_electricity_ghcr"
 description: "获取国网电费数据的插件"
 url: "https://github.com/ymx409599725-a11y/sgcc_electricity_new"
 arch:
