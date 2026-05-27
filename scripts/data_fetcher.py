@@ -6,7 +6,7 @@ import json
 
 import random
 import base64
-from datetime import datetime
+from datetime import datetime, date
 from selenium import webdriver
 from selenium.webdriver import ActionChains
 from selenium.webdriver.chrome.service import Service as ChromeService
@@ -50,6 +50,8 @@ class DataFetcher:
 
     def _init_db(self):
         self.db_type = os.getenv("DB_TYPE", "None").lower()
+        if self.db_type == "none" and os.getenv("ENABLE_DATABASE_STORAGE", "false").lower() == "true":
+            self.db_type = "sqlite"
         if self.db_type == 'mysql':
             from db import MysqlDB
             self.db = MysqlDB()
@@ -462,25 +464,37 @@ class DataFetcher:
 
         # 尝试通过 Vue state 获取分时电量
         tou_data = None
-        if self.db is not None:
-            try:
-                components = vue_state.selected_vue_data(driver)
-                usage_info = vue_state.normalize_usage(components)
-                tou_data = usage_info
-                logging.info(f"[{user_id}] Vue state 分时数据: 年度={usage_info.get('year')}, "
-                             f"月数据={len(usage_info.get('months', []))}条, "
-                             f"日数据={len(usage_info.get('daily', []))}条")
-                # 打印 Vue state 日数据详情
-                if usage_info.get("daily"):
-                    for d in usage_info["daily"][:7]:
-                        logging.info(f"  [日数据] {d.get('date')}: "
-                                     f"总={d.get('total_usage')}度, "
-                                     f"谷={d.get('valley_usage')}, 平={d.get('flat_usage')}, "
-                                     f"峰={d.get('peak_usage')}, 尖={d.get('tip_usage')}")
-                    if len(usage_info["daily"]) > 7:
-                        logging.info(f"  ... 还有 {len(usage_info['daily']) - 7} 条日数据")
-            except Exception as e:
-                logging.warning(f"[{user_id}] Vue state 分时数据获取失败: {e}")
+        try:
+            components = vue_state.selected_vue_data(driver)
+            usage_info = vue_state.normalize_usage(components)
+            tou_data = usage_info
+            logging.info(f"[{user_id}] Vue state 分时数据: 年度={usage_info.get('year')}, "
+                         f"月数据={len(usage_info.get('months', []))}条, "
+                         f"日数据={len(usage_info.get('daily', []))}条")
+            # 打印 Vue state 日数据详情
+            if usage_info.get("daily"):
+                for d in usage_info["daily"][:7]:
+                    logging.info(f"  [日数据] {d.get('date')}: "
+                                 f"总={d.get('total_usage')}度, "
+                                 f"谷={d.get('valley_usage')}, 平={d.get('flat_usage')}, "
+                                 f"峰={d.get('peak_usage')}, 尖={d.get('tip_usage')}")
+                if len(usage_info["daily"]) > 7:
+                    logging.info(f"  ... 还有 {len(usage_info['daily']) - 7} 条日数据")
+                vue_latest = max(
+                    usage_info["daily"],
+                    key=lambda row: self._parse_date(row.get("date")) or date.min,
+                )
+                vue_latest_date = vue_latest.get("date")
+                vue_latest_usage = vue_latest.get("total_usage")
+                if self._parse_date(vue_latest_date) and (
+                    self._parse_date(last_daily_date) is None
+                    or self._parse_date(vue_latest_date) > self._parse_date(last_daily_date)
+                ):
+                    logging.info(f"[{user_id}] 使用 Vue state 最新日用电覆盖 DOM 结果: "
+                                 f"{vue_latest_date} 用电 {vue_latest_usage} 度")
+                    last_daily_date, last_daily_usage = vue_latest_date, vue_latest_usage
+        except Exception as e:
+            logging.warning(f"[{user_id}] Vue state 分时数据获取失败: {e}")
 
         # 尝试获取电费账单明细（月度分时）
         bill_tou_data = None
@@ -663,17 +677,74 @@ class DataFetcher:
             # 点击日用电量 tab
             self._click_button(driver, By.XPATH, "//div[@class='el-tabs__nav is-top']/div[@id='tab-second']")
             time.sleep(self.RETRY_WAIT_TIME_OFFSET_UNIT * 2)
-            # 等待数据表格出现（兼容多种滚动类名）
-            usage_element = driver.find_element(By.XPATH,"""//*[@id="pane-second"]/div[2]/div[2]/div[1]/div[3]/table/tbody/tr[1]/td[2]/div""")
-            WebDriverWait(driver, self.DRIVER_IMPLICITY_WAIT_TIME).until(EC.visibility_of(usage_element)) # 等待用电量出现
 
-            # 增加是哪一天
-            date_element = driver.find_element(By.XPATH,"""//*[@id="pane-second"]/div[2]/div[2]/div[1]/div[3]/table/tbody/tr[1]/td[1]/div""")
-            last_daily_date = date_element.text # 获取最近一次用电量的日期
-            return last_daily_date, float(usage_element.text)
+            rows = self._read_daily_rows_from_dom(driver)
+            if rows:
+                logging.info(f"DOM 日用电行: {rows[:7]}")
+                latest_date, latest_usage = max(
+                    rows,
+                    key=lambda item: self._parse_date(item[0]) or date.min,
+                )
+                return latest_date, latest_usage
+
+            raise ValueError("未读取到有效日用电表格行")
         except Exception as e:
             logging.error(f"每日用电量数据获取失败: {e}")
             return None, None
+
+    def _read_daily_rows_from_dom(self, driver):
+        rows = []
+        WebDriverWait(driver, self.DRIVER_IMPLICITY_WAIT_TIME).until(
+            EC.visibility_of_element_located((
+                By.XPATH,
+                "//*[@id='pane-second']//div[contains(@class,'el-table__body-wrapper')]//table/tbody/tr"
+            ))
+        )
+        row_elements = driver.find_elements(
+            By.XPATH,
+            "//*[@id='pane-second']//div[contains(@class,'el-table__body-wrapper')]//table/tbody/tr"
+        )
+        for row in row_elements:
+            if not row.is_displayed():
+                continue
+            cells = row.find_elements(By.XPATH, "td/div")
+            if len(cells) < 2:
+                continue
+            day_text = cells[0].text.strip()
+            usage_text = cells[1].text.strip()
+            parsed_date = self._parse_date(day_text)
+            usage = self._parse_float(usage_text)
+            if parsed_date and usage is not None:
+                rows.append((parsed_date.isoformat(), usage))
+        return rows
+
+    @staticmethod
+    def _parse_date(value):
+        text = str(value or "").strip().replace("/", "-")
+        if not text:
+            return None
+        for fmt in ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S"):
+            try:
+                return datetime.strptime(text[:len(fmt)], fmt).date()
+            except ValueError:
+                pass
+        match = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", text)
+        if match:
+            try:
+                return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _parse_float(value):
+        text = re.sub(r"[^\d.\-]", "", str(value or ""))
+        if text in ("", "-", "."):
+            return None
+        try:
+            return float(text)
+        except ValueError:
+            return None
 
     def _get_month_usage(self, driver):
         """获取每月用电量"""
@@ -713,7 +784,7 @@ class DataFetcher:
     def _get_daily_usage_data(self, driver):
         """获取每日用电量数据 (7天或30天)，通过 radio 按钮切换，失败时返回空列表"""
         try:
-            fetch_days = int(os.getenv("DAILY_FETCH_DAYS", 7))
+            fetch_days = int(os.getenv("DATA_RETENTION_DAYS", os.getenv("DAILY_FETCH_DAYS", 7)))
             if fetch_days not in (7, 30):
                 fetch_days = 7
             logging.info(f"正在获取每日用电量数据 (最近 {fetch_days} 天)")
@@ -748,22 +819,14 @@ class DataFetcher:
             )
 
             # 获取用电量数据
-            days_element = driver.find_elements(By.XPATH,
-                "//*[@id='pane-second']//div[contains(@class,'el-table__body-wrapper')]"
-                "/table/tbody/tr")
-            date = []
+            days_element = self._read_daily_rows_from_dom(driver)
+            dates = []
             usages = []
-            for i in days_element:
-                try:
-                    day = i.find_element(By.XPATH, "td[1]/div").text
-                    usage = i.find_element(By.XPATH, "td[2]/div").text
-                    if usage != "":
-                        usages.append(usage)
-                        date.append(day)
-                except Exception:
-                    pass
-            logging.info(f"DOM 方式成功获取 {len(date)} 天的每日用电量数据")
-            return date, usages
+            for day, usage in days_element:
+                dates.append(day)
+                usages.append(usage)
+            logging.info(f"DOM 方式成功获取 {len(dates)} 天的每日用电量数据: {days_element[:7]}")
+            return dates, usages
         except Exception as e:
             logging.warning(f"DOM 方式获取每日用电量数据失败: {e}")
             return [], []

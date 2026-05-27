@@ -28,9 +28,10 @@ class SensorUpdator:
             self.balance_notify = None
 
 
-    def update_one_userid(self, user_id: str, balance: float, last_daily_date: str, last_daily_usage: float, yearly_charge: float, yearly_usage: float, month_charge: float, month_usage: float, tou_data: dict = None, enhanced_balance: dict = None, notify=True):
+    def update_one_userid(self, user_id: str, balance: float, last_daily_date: str, last_daily_usage: float, yearly_charge: float, yearly_usage: float, month_charge: float, month_usage: float, tou_data: dict = None, enhanced_balance: dict = None, notify=True, save_cache=True):
         logging.info(f"[{user_id}] 开始更新 Home Assistant 传感器数据...")
-        self._save_to_cache(user_id, balance, last_daily_date, last_daily_usage, yearly_charge, yearly_usage, month_charge, month_usage, tou_data, enhanced_balance)
+        if save_cache:
+            self._save_to_cache(user_id, balance, last_daily_date, last_daily_usage, yearly_charge, yearly_usage, month_charge, month_usage, tou_data, enhanced_balance)
         postfix = f"_{user_id[-4:]}"
         if balance is not None:
             if notify and self.balance_notify is not None:
@@ -114,10 +115,10 @@ class SensorUpdator:
 
         try:
             for user_id, values in data.items():
-                logging.info(f"正在从缓存重新推送用户 {user_id} 的数据。")
+                logging.info(f"缓存重发用户 {user_id} 的数据，不代表已从国网重新抓取。")
                 # Filter out 'timestamp' from values before passing to update_one_userid
                 clean_values = {k: v for k, v in values.items() if k != 'timestamp'}
-                self.update_one_userid(user_id, **clean_values, notify=False)
+                self.update_one_userid(user_id, **clean_values, notify=False, save_cache=False)
             return True
         except Exception as e:
             logging.error(f"重新推送数据失败: {e}")
