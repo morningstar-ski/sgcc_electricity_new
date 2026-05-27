@@ -51,11 +51,12 @@ jobs:
         run: |
           VERSION="${{ github.event.inputs.version }}"
           if [ -z "$VERSION" ]; then
-            VERSION="v1.8.4"
+            VERSION=$(grep -E '^version:' config.yaml | head -n1 | sed -E 's/version:[[:space:]]*\"?([^\"]+)\"?/\1/')
           fi
           if [[ "$VERSION" != v* ]]; then
             VERSION="v${VERSION}"
           fi
+          echo "Using image tag: ${VERSION}"
           echo "value=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push architecture image
