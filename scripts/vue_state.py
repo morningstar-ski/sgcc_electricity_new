@@ -97,15 +97,14 @@ def normalize_usage(components: list[dict[str, Any]]) -> dict[str, Any]:
     month_rows = power_data.get("mothEleList") or _first_data_value(components, "mothData") or []
 
     daily_rows = []
-    for key in ("tableData", "new_sevenEleList", "sevenEleList"):
-        for row in _data_values(components, key):
-            if isinstance(row, list) and row and any(
-                item.get("thisVPq") is not None for item in row if isinstance(item, dict)
-            ):
-                daily_rows = row
-                break
-        if daily_rows:
-            break
+    daily_source = ""
+    for key in ("sevenEleList", "sevenEleList_t", "new_sevenEleList", "tableData"):
+        candidates = [row for row in _data_values(components, key) if _is_daily_rows(row)]
+        if not candidates:
+            continue
+        daily_rows = max(candidates, key=lambda row: (len(row), _has_latest_placeholder(row)))
+        daily_source = key
+        break
 
     return {
         "year": str(info.get("year") or _first_data_value(components, "queryYear") or ""),
@@ -117,6 +116,7 @@ def normalize_usage(components: list[dict[str, Any]]) -> dict[str, Any]:
             "end": _first_data_value(components, "end"),
         },
         "months": [_normalize_usage_month(row) for row in month_rows if isinstance(row, dict)],
+        "daily_source": daily_source,
         "daily": [_normalize_daily_row(row) for row in daily_rows if isinstance(row, dict) and _normalize_daily_row(row)],
         "raw": power_data,
     }
@@ -158,6 +158,22 @@ def _data_values(components: list[dict[str, Any]], key: str) -> list[Any]:
     return [(component.get("data") or {}).get(key) for component in components if key in (component.get("data") or {})]
 
 
+def _is_daily_rows(rows: Any) -> bool:
+    if not isinstance(rows, list) or not rows:
+        return False
+    return any(isinstance(row, dict) and row.get("day") for row in rows)
+
+
+def _has_latest_placeholder(rows: list[dict[str, Any]]) -> bool:
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        value = str(row.get("dayElePq") or "").strip()
+        if row.get("day") and value in ("", "-", "—", "None"):
+            return True
+    return False
+
+
 def _normalize_usage_month(row: dict[str, Any]) -> dict[str, Any]:
     total = _safe_float(row.get("monthEleNum"))
     charge = _safe_float(row.get("monthEleCost"))
@@ -176,14 +192,17 @@ def _normalize_daily_row(row: dict[str, Any]) -> Optional[dict[str, Any]]:
     date = str(row.get("day") or "").strip()
     if not date:
         return None
-    total = _safe_float(row.get("dayElePq"), default=0.0)
+    total = _safe_float(row.get("dayElePq"))
+    is_available = total is not None
     return {
         "date": date,
         "total_usage": total,
-        "valley_usage": _safe_float(row.get("thisVPq"), default=0.0),
-        "flat_usage": _safe_float(row.get("thisNPq"), default=0.0),
-        "peak_usage": _safe_float(row.get("thisPPq"), default=0.0),
-        "tip_usage": _safe_float(row.get("thisTPq"), default=0.0),
+        "valley_usage": _safe_float(row.get("thisVPq")) if is_available else None,
+        "flat_usage": _safe_float(row.get("thisNPq")) if is_available else None,
+        "peak_usage": _safe_float(row.get("thisPPq")) if is_available else None,
+        "tip_usage": _safe_float(row.get("thisTPq")) if is_available else None,
+        "is_available": is_available,
+        "raw_total_usage": row.get("dayElePq"),
     }
 
 

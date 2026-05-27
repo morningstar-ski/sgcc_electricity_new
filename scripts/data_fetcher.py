@@ -470,29 +470,42 @@ class DataFetcher:
             tou_data = usage_info
             logging.info(f"[{user_id}] Vue state 分时数据: 年度={usage_info.get('year')}, "
                          f"月数据={len(usage_info.get('months', []))}条, "
-                         f"日数据={len(usage_info.get('daily', []))}条")
+                         f"日数据={len(usage_info.get('daily', []))}条, "
+                         f"来源={usage_info.get('daily_source') or 'unknown'}")
             # 打印 Vue state 日数据详情
             if usage_info.get("daily"):
                 for d in usage_info["daily"][:7]:
+                    status = "有效" if d.get("is_available", True) else f"无读数({d.get('raw_total_usage')})"
                     logging.info(f"  [日数据] {d.get('date')}: "
                                  f"总={d.get('total_usage')}度, "
                                  f"谷={d.get('valley_usage')}, 平={d.get('flat_usage')}, "
-                                 f"峰={d.get('peak_usage')}, 尖={d.get('tip_usage')}")
+                                 f"峰={d.get('peak_usage')}, 尖={d.get('tip_usage')}, "
+                                 f"状态={status}")
                 if len(usage_info["daily"]) > 7:
                     logging.info(f"  ... 还有 {len(usage_info['daily']) - 7} 条日数据")
+                available_daily = [row for row in usage_info["daily"] if row.get("is_available", True)]
+                unavailable_daily = [row for row in usage_info["daily"] if not row.get("is_available", True)]
+                if unavailable_daily:
+                    latest_unavailable = max(
+                        unavailable_daily,
+                        key=lambda row: self._parse_date(row.get("date")) or date.min,
+                    )
+                    logging.warning(f"[{user_id}] 国网页面存在 {latest_unavailable.get('date')} 日数据行，"
+                                    f"但读数为 {latest_unavailable.get('raw_total_usage')}，不会用它覆盖传感器。")
                 vue_latest = max(
-                    usage_info["daily"],
+                    available_daily,
                     key=lambda row: self._parse_date(row.get("date")) or date.min,
-                )
-                vue_latest_date = vue_latest.get("date")
-                vue_latest_usage = vue_latest.get("total_usage")
-                if self._parse_date(vue_latest_date) and (
-                    self._parse_date(last_daily_date) is None
-                    or self._parse_date(vue_latest_date) > self._parse_date(last_daily_date)
-                ):
-                    logging.info(f"[{user_id}] 使用 Vue state 最新日用电覆盖 DOM 结果: "
-                                 f"{vue_latest_date} 用电 {vue_latest_usage} 度")
-                    last_daily_date, last_daily_usage = vue_latest_date, vue_latest_usage
+                ) if available_daily else None
+                if vue_latest:
+                    vue_latest_date = vue_latest.get("date")
+                    vue_latest_usage = vue_latest.get("total_usage")
+                    if self._parse_date(vue_latest_date) and (
+                        self._parse_date(last_daily_date) is None
+                        or self._parse_date(vue_latest_date) > self._parse_date(last_daily_date)
+                    ):
+                        logging.info(f"[{user_id}] 使用 Vue state 最新有效日用电覆盖 DOM 结果: "
+                                     f"{vue_latest_date} 用电 {vue_latest_usage} 度")
+                        last_daily_date, last_daily_usage = vue_latest_date, vue_latest_usage
         except Exception as e:
             logging.warning(f"[{user_id}] Vue state 分时数据获取失败: {e}")
 
@@ -734,6 +747,12 @@ class DataFetcher:
                 return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
             except ValueError:
                 return None
+        short_match = re.search(r"^(\d{1,2})-(\d{1,2})$", text)
+        if short_match:
+            try:
+                return date(datetime.now().year, int(short_match.group(1)), int(short_match.group(2)))
+            except ValueError:
+                return None
         return None
 
     @staticmethod
@@ -934,6 +953,10 @@ class DataFetcher:
             if tou_data and tou_data.get("daily"):
                 tou_count = 0
                 for row in tou_data["daily"]:
+                    if not row.get("is_available", True):
+                        logging.info(f"[{user_id}] 跳过无读数日用电 {row.get('date')}: "
+                                     f"{row.get('raw_total_usage')}")
+                        continue
                     try:
                         row["user_name"] = user_name
                         self.db.insert_daily_data(row)
